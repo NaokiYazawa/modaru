@@ -98,17 +98,15 @@ function closeAll(): void {
   apply(transitions.beginCloseAll(modals, ModalOutcome.dismissed()));
 }
 
+// "Open" for the public counters means live (mounting or open): a `mounting`
+// instance is committed and one effect tick away from visible, so excluding
+// it would report count() === 0 for a modal that is already on its way in.
 function isOpen(): boolean {
-  return modals.some((m) => m.phase.kind === "open");
+  return modals.some((m) => m.phase.kind !== "closing");
 }
 
 function count(): number {
-  return modals.filter((m) => m.phase.kind === "open").length;
-}
-
-/** Test-only: drops every instance (called from resetModalsForTest in the factory). */
-function reset(): void {
-  apply([]);
+  return modals.filter((m) => m.phase.kind !== "closing").length;
 }
 
 /**
@@ -128,7 +126,6 @@ export const modalStore = {
   closeAll,
   isOpen,
   count,
-  reset,
 } as const;
 
 /** Cross-modal utilities usable from anywhere (public API). */

@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import { useEffect, useRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createModal, resetModalsForTest } from "./factory";
+import { createModal, resetModals } from "./factory";
 import { ModalProvider } from "./provider";
 import { modalStore } from "./store";
 import type { ModalOutcome, ModalWrapperComponent } from "./types";
@@ -69,11 +69,67 @@ function Content() {
 
 afterEach(() => {
   cleanup();
-  resetModalsForTest();
+  resetModals();
   vi.useRealTimers();
 });
 
 describe("ModalProvider + wrapper contract", () => {
+  it("presents in two phases: the wrapper renders closed once, then flips open (CSS enter transitions)", () => {
+    const openHistory: boolean[] = [];
+    const RecordingWrapper: ModalWrapperComponent = ({ open, children }) => {
+      openHistory.push(open ?? false);
+      return <div>{open ? children : null}</div>;
+    };
+    const modal = createModal(Content, { wrapper: RecordingWrapper });
+    render(<ModalProvider />);
+
+    act(() => {
+      void modal.open();
+    });
+
+    expect(openHistory).toEqual([false, true]);
+
+    act(() => {
+      modal.close();
+    });
+  });
+
+  it("settles every live modal as dismissed when the provider unmounts", async () => {
+    const modal = createModal(Content, { wrapper: InstantWrapper });
+    const view = render(<ModalProvider />);
+
+    let promise!: Promise<ModalOutcome<void>>;
+    act(() => {
+      promise = modal.open();
+    });
+    view.unmount();
+
+    await expect(promise).resolves.toEqual({ kind: "dismissed" });
+    expect(modalStore.getModals()).toHaveLength(0);
+  });
+
+  it("preserves a settled outcome when the provider unmounts mid-exit", async () => {
+    vi.useFakeTimers();
+    const modal = createModal(Content, {
+      wrapper: withExitDuration(BareWrapper, 200),
+    }).returns<number>();
+    const view = render(<ModalProvider />);
+
+    let promise!: Promise<ModalOutcome<number>>;
+    act(() => {
+      promise = modal.open();
+    });
+    act(() => {
+      modal.confirm(7);
+    });
+    // Unmount while the exit timer is still pending: the timer is cleared,
+    // so only the provider's unmount cleanup can settle the outcome.
+    view.unmount();
+
+    await expect(promise).resolves.toEqual({ kind: "confirmed", data: 7 });
+    expect(modalStore.getModals()).toHaveLength(0);
+  });
+
   it("renders content on open; confirm via useModalInstance resolves and disposes", async () => {
     const modal = createModal(Content, {
       wrapper: InstantWrapper,

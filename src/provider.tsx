@@ -1,6 +1,6 @@
 "use client";
 
-import { type ComponentType, Suspense } from "react";
+import { type ComponentType, Suspense, useEffect } from "react";
 import { finalizeModal } from "./factory";
 import { modalStore, useModals } from "./store";
 import { ModalInstanceContext } from "./use-modal-instance";
@@ -15,6 +15,33 @@ import { ModalInstanceContext } from "./use-modal-instance";
  */
 export function ModalProvider() {
   const modals = useModals();
+
+  // Presents `mounting` instances after their closed-state render has been
+  // committed and painted (useEffect, not useLayoutEffect, so the browser
+  // computes the closed styles first). The wrapper thus experiences a real
+  // open=false → true flip, which is what lets CSS enter transitions fire.
+  useEffect(() => {
+    for (const modal of modals) {
+      if (modal.phase.kind === "mounting") modalStore.present(modal.id);
+    }
+  }, [modals]);
+
+  // If the provider unmounts while modals are live (route change, app
+  // teardown), no wrapper is left to report exit completion — without this,
+  // pending outcome Promises would never settle and instances would linger
+  // in the store, re-appearing under a later provider. Settle everything:
+  // close() is a no-op for already-closing instances (their outcome — e.g. a
+  // confirm whose exit was interrupted — is preserved), and settles the rest
+  // as dismissed; finalizeModal resolves and removes each.
+  useEffect(
+    () => () => {
+      for (const modal of [...modalStore.getModals()]) {
+        modalStore.close(modal.id);
+        finalizeModal(modal.id);
+      }
+    },
+    [],
+  );
 
   return (
     <>

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createModal, finalizeModal, resetModalsForTest } from "./factory";
+import { createModal, finalizeModal, resetModals } from "./factory";
 import { modalController, modalStore } from "./store";
 import { type ModalOptions, ModalOutcome } from "./types";
 
@@ -29,7 +29,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   unsubscribe();
-  resetModalsForTest();
+  resetModals();
 });
 
 describe("ModalOutcome", () => {
@@ -84,13 +84,35 @@ describe("modal lifecycle", () => {
     await expect(second).resolves.toEqual({ kind: "dismissed" });
   });
 
-  it("re-opening while open returns the same outcome Promise", () => {
+  it("re-opening while live (mounting or open) returns the same outcome Promise", () => {
     const modal = createModal(NoProps, withWrapper);
+    // Without a rendered provider the instance stays `mounting`, so this
+    // also covers the double-click race before the presenting effect runs.
     const first = modal.open();
     const second = modal.open();
 
     expect(second).toBe(first);
     expect(modalStore.getModals()).toHaveLength(1);
+  });
+
+  it("re-opening while closing starts a fresh instance; the old outcome is preserved", async () => {
+    const modal = createModal(NoProps, withWrapper).returns<string>();
+    const first = modal.open();
+    modal.confirm("old");
+
+    const second = modal.open();
+
+    expect(second).not.toBe(first);
+    // Both coexist until the first finishes its exit rendering.
+    expect(modalStore.getModals()).toHaveLength(2);
+
+    const firstId = modalStore.getModals().at(0)?.id;
+    if (firstId) finalizeModal(firstId);
+    await expect(first).resolves.toEqual({ kind: "confirmed", data: "old" });
+
+    modal.confirm("new");
+    finalizeLast();
+    await expect(second).resolves.toEqual({ kind: "confirmed", data: "new" });
   });
 
   it("close-family calls after closing began return false and never overwrite the outcome", async () => {
@@ -162,6 +184,23 @@ describe("modalController / modalStore", () => {
     await expect(dialogResult).resolves.toEqual({ kind: "dismissed" });
     await expect(alertResult).resolves.toEqual({ kind: "dismissed" });
     expect(modalController.isOpen()).toBe(false);
+  });
+
+  it("resetModals settles pending outcomes instead of abandoning them", async () => {
+    const pending = createModal(NoProps, withWrapper);
+    const confirmed = createModal(NoProps, withWrapper).returns<number>();
+    const pendingResult = pending.open();
+    const confirmedResult = confirmed.open();
+    confirmed.confirm(1); // closing: its settled outcome must survive the reset
+
+    resetModals();
+
+    await expect(pendingResult).resolves.toEqual({ kind: "dismissed" });
+    await expect(confirmedResult).resolves.toEqual({
+      kind: "confirmed",
+      data: 1,
+    });
+    expect(modalStore.getModals()).toHaveLength(0);
   });
 
   it("operations survive destructuring (no `this` dependency)", () => {

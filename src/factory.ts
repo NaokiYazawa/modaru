@@ -46,12 +46,22 @@ export function finalizeModal(id: string): void {
 }
 
 /**
- * Test-only: drops every instance and unresolved resolver. Call in
- * afterEach so module-level store state never leaks between tests.
+ * Settles and clears all modal state — the reset for tests, re-exported as
+ * `modaru/testing`. Call it in afterEach: the store is module-level, so
+ * instances opened in one test would otherwise leak into the next.
+ *
+ * Every pending outcome Promise resolves rather than being abandoned:
+ * already-closing instances keep their settled outcome, everything else
+ * resolves as `dismissed`.
  */
-export function resetModalsForTest(): void {
+export function resetModals(): void {
+  for (const modal of [...modalStore.getModals()]) {
+    modalStore.close(modal.id);
+    finalizeModal(modal.id);
+  }
+  // Every resolver belongs to a stored instance, so the registry is empty
+  // by now; clear defensively in case an invariant ever breaks.
   deferreds.clear();
-  modalStore.reset();
 }
 
 /**
@@ -89,18 +99,22 @@ function createController(
     | { id: string; promise: Promise<ModalOutcome<unknown>> }
     | undefined;
 
-  const isOpen = (): boolean =>
-    current !== undefined &&
-    modalStore
-      .getModals()
-      .some((m) => m.id === current?.id && m.phase.kind === "open");
+  // "Live" = mounting or open. A `mounting` instance is one the provider has
+  // rendered closed but not yet presented (an effect flips it open on the
+  // next tick); for every outward purpose it is already this controller's
+  // one instance. `closing` is not live: its outcome is settled, so open()
+  // may start a fresh instance while the old one finishes its exit.
+  const isLive = (): boolean => {
+    const instance = current && modalStore.get(current.id);
+    return instance !== undefined && instance.phase.kind !== "closing";
+  };
 
   const open = (props?: unknown): Promise<ModalOutcome<unknown>> => {
     assertSingleProvider();
 
-    // Re-opening while open does not stack a second instance; it returns
+    // Re-opening while live does not stack a second instance; it returns
     // the existing outcome Promise.
-    if (current && isOpen()) {
+    if (isLive() && current) {
       return current.promise;
     }
 
@@ -121,8 +135,10 @@ function createController(
     });
 
     deferreds.set(id, resolve);
+    // Entered as `mounting` only; ModalProvider presents it in an effect
+    // after the closed-state render commits, so the wrapper sees a real
+    // open=false → true flip (CSS enter transitions depend on it).
     modalStore.add(instance);
-    modalStore.present(id);
     return promise;
   };
 
@@ -136,7 +152,7 @@ function createController(
 
   const close = (): boolean => closeWith(ModalOutcome.dismissed());
 
-  return { open, confirm, cancel, close, isOpen };
+  return { open, confirm, cancel, close, isOpen: isLive };
 }
 
 function makeModal<TComponent extends ComponentType<never>, TResult>(

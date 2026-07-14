@@ -34,8 +34,8 @@ export type ModalOutcome<T = void> =
 
 // Data-less variants share frozen constants. `ModalOutcome<never>` is
 // assignable to any `ModalOutcome<T>`, so one constant serves all types.
-const CANCELED: ModalOutcome<never> = { kind: "canceled" };
-const DISMISSED: ModalOutcome<never> = { kind: "dismissed" };
+const CANCELED: ModalOutcome<never> = Object.freeze({ kind: "canceled" });
+const DISMISSED: ModalOutcome<never> = Object.freeze({ kind: "dismissed" });
 
 /** Constructors and predicates for {@link ModalOutcome}. */
 export const ModalOutcome = {
@@ -47,8 +47,10 @@ export const ModalOutcome = {
 
 /**
  * Lifecycle phase of a modal instance.
- *  - `mounting`: just added. The wrapper mounts closed, then flips open on
- *    the next update so CSS enter transitions can fire.
+ *  - `mounting`: just added. The wrapper renders closed once; ModalProvider
+ *    presents it in an effect after that render is committed and painted,
+ *    so the wrapper experiences a real open=false → true flip and CSS enter
+ *    transitions can fire.
  *  - `open`: visible.
  *  - `closing`: exit rendering in progress. The outcome exists only in this
  *    phase — "a result is settled exactly when closing has begun" is an
@@ -59,8 +61,8 @@ export type ModalPhase =
   | Readonly<{ kind: "open" }>
   | Readonly<{ kind: "closing"; outcome: ModalOutcome<unknown> }>;
 
-const MOUNTING: ModalPhase = { kind: "mounting" };
-const OPEN: ModalPhase = { kind: "open" };
+const MOUNTING: ModalPhase = Object.freeze({ kind: "mounting" });
+const OPEN: ModalPhase = Object.freeze({ kind: "open" });
 
 /** Constructors for {@link ModalPhase}. */
 export const ModalPhase = {
@@ -183,7 +185,10 @@ export type Modal<TComponent, TResult = void> = Readonly<{
   cancel: () => boolean;
   /** Closes without a decision (resolves as `dismissed`). */
   close: () => boolean;
-  /** Whether this controller's modal is currently open. */
+  /**
+   * Whether this controller's modal is currently live: open, or committed
+   * and about to be presented. `false` once closing has begun.
+   */
   isOpen: () => boolean;
   /**
    * Declares the confirm data type. A type-level operation: it returns the

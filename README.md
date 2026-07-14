@@ -17,12 +17,14 @@ await api.delete(item.id);
   Props are inferred from your component; `confirm(data)` requires the declared
   result type.
 - **Headless** — bring your own dialog primitives. The only seam is a
-  four-prop wrapper contract. Base UI satisfies it natively; anything else
-  adapts in one line.
-- **Animation-lifecycle correct** — an instance is disposed when its exit
-  rendering *actually completes* (via the wrapper's completion callback), not
-  after a hardcoded timeout. Change an animation's duration and nothing
-  desyncs.
+  four-prop wrapper contract. Base UI satisfies it natively; most other
+  libraries adapt in a few lines
+  (see [Adapters](#adapters-for-popular-ui-libraries)).
+- **Animation-lifecycle correct** — on entry the wrapper renders closed once
+  and flips open on the next tick, so CSS enter transitions fire; on exit an
+  instance is disposed when its exit rendering *actually completes* (via the
+  wrapper's completion callback), not after a hardcoded timeout. Change an
+  animation's duration and nothing desyncs.
 - **Tiny and honest internals** — zero dependencies, < 2 kB min+gzip. State is
   a discriminated-union phase machine updated by pure transition functions;
   the single impure edge (resolving the Promise) is isolated and documented.
@@ -42,6 +44,12 @@ yarn add modaru
 bun add modaru
 ```
 
+modaru is published **ESM-only**. Its store is module-level singleton state,
+and shipping a CJS copy alongside would risk two stores loading in one app
+(the [dual package hazard](https://nodejs.org/api/packages.html#dual-package-hazard)).
+CJS projects on Node 20.19+ / 22.12+ can still `require("modaru")` as usual;
+older Node needs dynamic `import()`.
+
 ### 1. Bind your UI library (once)
 
 modaru is headless: you hand it the *root* component of your dialog primitive.
@@ -50,15 +58,15 @@ This is the only file in your app that knows which UI library you use.
 ```tsx
 // app/modal.ts
 import { createModalFactory } from "modaru";
-import { Dialog } from "@base-ui/react/dialog";
+import { Dialog } from "@base-ui/react/dialog"; // Base UI v1+
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 
 export const createDialog = createModalFactory(Dialog.Root);
 export const createAlertDialog = createModalFactory(AlertDialog.Root);
 ```
 
-Base UI's roots satisfy the wrapper contract as-is. For libraries without an
-exit-completion callback (e.g. Radix UI), see [Wrapper contract](#wrapper-contract).
+Base UI's roots satisfy the wrapper contract as-is. For other libraries, see
+[Adapters](#adapters-for-popular-ui-libraries).
 
 ### 2. Mount the provider (once)
 
@@ -76,17 +84,23 @@ the provider. Close it through `useModalInstance`:
 
 ```tsx
 import { useModalInstance } from "modaru";
+import { Dialog } from "@base-ui/react/dialog";
 import { createDialog } from "./modal";
 
 function RenameDialog({ current }: { current: string }) {
   const { confirm, cancel } = useModalInstance<string>();
   const [name, setName] = useState(current);
   return (
-    <Dialog.Popup>
-      <input value={name} onChange={(e) => setName(e.target.value)} />
-      <button onClick={() => cancel()}>Cancel</button>
-      <button onClick={() => confirm(name)}>Rename</button>
-    </Dialog.Popup>
+    <Dialog.Portal>
+      <Dialog.Backdrop />
+      <Dialog.Viewport>
+        <Dialog.Popup>
+          <input value={name} onChange={(e) => setName(e.target.value)} />
+          <button onClick={() => cancel()}>Cancel</button>
+          <button onClick={() => confirm(name)}>Rename</button>
+        </Dialog.Popup>
+      </Dialog.Viewport>
+    </Dialog.Portal>
   );
 }
 
@@ -129,16 +143,144 @@ through four props:
 | `children` | in | The modal content. |
 
 Base UI's `Dialog.Root` / `AlertDialog.Root` implement all four natively.
+Most other libraries carry the same information under different names — an
+adapter is a few lines of prop mapping.
 
-For primitives with no completion callback — Radix UI, Headless UI, or your
-own — adapt with `withExitDuration`, passing your exit animation's length:
+On entry, the provider renders the wrapper closed once and flips `open` on
+the next tick, so CSS enter transitions fire in any wrapper that transitions
+on `open` — no library-specific enter machinery required.
+
+## Adapters for popular UI libraries
+
+Two cases:
+
+1. **The library reports exit completion** (most do): map its callback onto
+   `onOpenChangeComplete(false)` and keep exact, timer-free disposal.
+2. **It does not** (Radix UI, React Aria Components): synthesize the signal
+   with `withExitDuration`, passing your exit animation's length.
+
+Each adapter below is a `ModalWrapperComponent` — bind it once with
+`createModalFactory(TheAdapter)` as in [Getting started](#getting-started).
+
+**Ant Design** — `afterOpenChange(open)` is `onOpenChangeComplete` verbatim:
+
+```tsx
+import { Modal } from "antd";
+import type { ModalWrapperComponent } from "modaru";
+
+const AntdModal: ModalWrapperComponent = ({
+  open,
+  onOpenChange,
+  onOpenChangeComplete,
+  children,
+}) => (
+  <Modal
+    open={open}
+    onCancel={() => onOpenChange?.(false)}
+    afterOpenChange={onOpenChangeComplete}
+    footer={null}
+  >
+    {children}
+  </Modal>
+);
+```
+
+**Chakra UI v3 / Ark UI** — unwrap `details.open`; `onExitComplete` is the
+exit signal:
+
+```tsx
+import { Dialog } from "@chakra-ui/react"; // Ark UI: "@ark-ui/react"
+
+const ChakraDialog: ModalWrapperComponent = ({
+  open,
+  onOpenChange,
+  onOpenChangeComplete,
+  children,
+}) => (
+  <Dialog.Root
+    open={open}
+    onOpenChange={(details) => onOpenChange?.(details.open)}
+    onExitComplete={() => onOpenChangeComplete?.(false)}
+  >
+    {children}
+  </Dialog.Root>
+);
+```
+
+**Mantine** — the prop is `opened`; `onExitTransitionEnd` (7.15+) is the exit
+signal:
+
+```tsx
+import { Modal } from "@mantine/core";
+
+const MantineModal: ModalWrapperComponent = ({
+  open,
+  onOpenChange,
+  onOpenChangeComplete,
+  children,
+}) => (
+  <Modal
+    opened={open ?? false}
+    onClose={() => onOpenChange?.(false)}
+    onExitTransitionEnd={() => onOpenChangeComplete?.(false)}
+  >
+    {children}
+  </Modal>
+);
+```
+
+**MUI** — the transition's `onExited`, passed through `slotProps.transition`:
+
+```tsx
+import { Dialog } from "@mui/material";
+
+const MuiDialog: ModalWrapperComponent = ({
+  open,
+  onOpenChange,
+  onOpenChangeComplete,
+  children,
+}) => (
+  <Dialog
+    open={open ?? false}
+    onClose={() => onOpenChange?.(false)}
+    slotProps={{
+      transition: { onExited: () => onOpenChangeComplete?.(false) },
+    }}
+  >
+    {children}
+  </Dialog>
+);
+```
+
+**Headless UI** — wrap in `Transition`; `afterLeave` is the exit signal:
+
+```tsx
+import { Dialog, Transition } from "@headlessui/react";
+
+const HeadlessDialog: ModalWrapperComponent = ({
+  open,
+  onOpenChange,
+  onOpenChangeComplete,
+  children,
+}) => (
+  <Transition
+    show={open ?? false}
+    afterLeave={() => onOpenChangeComplete?.(false)}
+  >
+    <Dialog onClose={() => onOpenChange?.(false)}>{children}</Dialog>
+  </Transition>
+);
+```
+
+**Radix UI (and shadcn/ui)** — no exit-completion callback exists, so
+synthesize it:
 
 ```tsx
 import { withExitDuration } from "modaru";
 import { Dialog } from "radix-ui";
 
 export const createDialog = createModalFactory(
-  withExitDuration(Dialog.Root, 200),
+  withExitDuration(Dialog.Root, 200), // your exit animation's length
 );
 ```
 
@@ -157,19 +299,43 @@ exact timing.
 | `ModalOutcome` | Constructors and predicates for the outcome union. |
 | `modalController` | Cross-modal utilities: `closeAll()`, `isOpen()`, `count()`. |
 | `withExitDuration(Wrapper, ms)` | Adapts a completion-less dialog root to the wrapper contract. |
+| `resetModals()` (from `modaru/testing`) | Settles all pending outcomes and clears the store. For your test suite's `afterEach`. |
 
 Semantics worth knowing:
 
-- **One controller, one instance.** Calling `open()` while open returns the
-  *same* outcome Promise instead of stacking a second instance. Different
-  controllers stack freely.
+- **One live instance per controller.** Calling `open()` while the modal is
+  live returns the *same* outcome Promise instead of stacking a second
+  instance. Calling it while the previous instance is still exit-animating
+  starts a *fresh* instance — the two briefly coexist, and the first outcome
+  is preserved. Different controllers stack freely.
 - **First outcome wins.** Once closing begins, further `confirm`/`cancel`/
   `close` calls return `false` and never overwrite the settled outcome.
 - **`returns<R>()` is type-level.** It re-types the same controller; no new
-  state is created.
+  state is created. Mind the alias: the pre-`returns` reference operates on
+  the same instance, and its bare `confirm()` would resolve a typed await
+  with `undefined` — export only the `.returns<R>()` handle.
+- **Provider unmount settles everything.** If `<ModalProvider>` unmounts
+  while modals are live (route change, app teardown), every pending outcome
+  resolves — as `dismissed` unless already settled — instead of hanging the
+  awaiting caller.
 - **Fail-fast provider checks.** `open()` throws if no `<ModalProvider>` is
   mounted (or more than one) — checked at call time, so StrictMode/HMR/lazy
-  transients never false-positive.
+  transients never false-positive. State lives in module scope: mount one
+  provider per app (one React root, one bundled copy of modaru).
+
+## Testing
+
+modaru's store is module-level, so instances opened in one test would leak
+into the next. Reset between tests:
+
+```ts
+import { resetModals } from "modaru/testing";
+
+afterEach(() => resetModals());
+```
+
+`resetModals()` settles every pending outcome Promise (as `dismissed`, unless
+already settled) rather than abandoning it, then empties the store.
 
 ## Comparison
 

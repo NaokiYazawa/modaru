@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # Bun 製パッケージ (bun.lock / prepublishOnly の bun run) なので pnpm ではなく Bun を使う。
+      # bun-version 未指定 = 最新の安定版を取得。v2 は Node 24 ランタイム。
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # CI 専用モード: 書き込みせず format / lint / import 整列を厳密チェック。
+      # 対象は biome.json の files.includes (src/**) で絞られる。
+      - name: Lint (Biome)
+        run: bunx biome ci .
+
+      - name: Type check
+        run: bun run check-types
+
+      # 単体テスト。hermetic (secret/env 不要) なので pull_request トリガでも安全。
+      - name: Test
+        run: bun run test
+
+      # dts / sourcemap 付きの ESM ビルドが通ることを検証。
+      - name: Build
+        run: bun run build

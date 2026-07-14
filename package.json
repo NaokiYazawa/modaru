@@ -18,7 +18,7 @@
   "author": "Naoki Yazawa",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/linto-dev-collections/modaru.git"
+    "url": "git+https://github.com/NaokiYazawa/modaru.git"
   },
   "type": "module",
   "sideEffects": false,
@@ -66,8 +66,8 @@
     "typescript": "^5.9.0",
     "vitest": "^4.1.10"
   },
-  "homepage": "https://github.com/linto-dev-collections/modaru#readme",
+  "homepage": "https://github.com/NaokiYazawa/modaru#readme",
   "bugs": {
-    "url": "https://github.com/linto-dev-collections/modaru/issues"
+    "url": "https://github.com/NaokiYazawa/modaru/issues"
   }
 }

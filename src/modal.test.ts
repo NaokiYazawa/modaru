@@ -48,7 +48,7 @@ describe("ModalOutcome", () => {
 
 describe("modal lifecycle", () => {
   it("confirm resolves as confirmed(data)", async () => {
-    const modal = createModal(Greeting, withWrapper).returns<number>();
+    const modal = createModal<number>()(Greeting, withWrapper);
     const promise = modal.open({ name: "a" });
     expect(modal.isOpen()).toBe(true);
 
@@ -96,7 +96,7 @@ describe("modal lifecycle", () => {
   });
 
   it("re-opening while closing starts a fresh instance; the old outcome is preserved", async () => {
-    const modal = createModal(NoProps, withWrapper).returns<string>();
+    const modal = createModal<string>()(NoProps, withWrapper);
     const first = modal.open();
     modal.confirm("old");
 
@@ -116,7 +116,7 @@ describe("modal lifecycle", () => {
   });
 
   it("close-family calls after closing began return false and never overwrite the outcome", async () => {
-    const modal = createModal(NoProps, withWrapper).returns<string>();
+    const modal = createModal<string>()(NoProps, withWrapper);
     const promise = modal.open();
 
     expect(modal.confirm("first")).toBe(true);
@@ -138,12 +138,11 @@ describe("modal lifecycle", () => {
     expect(modal.close()).toBe(false);
   });
 
-  it("returns() re-types the same controller (it can operate on the open instance)", async () => {
-    const modal = createModal(NoProps, withWrapper);
-    const typed = modal.returns<number>();
+  it("createModal<R>() fixes the result type up front (confirm carries typed data)", async () => {
+    const modal = createModal<number>()(NoProps, withWrapper);
     const promise = modal.open();
 
-    expect(typed.confirm(7)).toBe(true);
+    expect(modal.confirm(7)).toBe(true);
     finalizeLast();
 
     await expect(promise).resolves.toEqual({ kind: "confirmed", data: 7 });
@@ -188,7 +187,7 @@ describe("modalController / modalStore", () => {
 
   it("resetModals settles pending outcomes instead of abandoning them", async () => {
     const pending = createModal(NoProps, withWrapper);
-    const confirmed = createModal(NoProps, withWrapper).returns<number>();
+    const confirmed = createModal<number>()(NoProps, withWrapper);
     const pendingResult = pending.open();
     const confirmedResult = confirmed.open();
     confirmed.confirm(1); // closing: its settled outcome must survive the reset

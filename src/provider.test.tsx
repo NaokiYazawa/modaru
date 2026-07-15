@@ -110,9 +110,9 @@ describe("ModalProvider + wrapper contract", () => {
 
   it("preserves a settled outcome when the provider unmounts mid-exit", async () => {
     vi.useFakeTimers();
-    const modal = createModal(Content, {
+    const modal = createModal<number>()(Content, {
       wrapper: withExitDuration(BareWrapper, 200),
-    }).returns<number>();
+    });
     const view = render(<ModalProvider />);
 
     let promise!: Promise<ModalOutcome<number>>;
@@ -131,9 +131,9 @@ describe("ModalProvider + wrapper contract", () => {
   });
 
   it("renders content on open; confirm via useModalInstance resolves and disposes", async () => {
-    const modal = createModal(Content, {
+    const modal = createModal<number>()(Content, {
       wrapper: InstantWrapper,
-    }).returns<number>();
+    });
     render(<ModalProvider />);
 
     let promise!: Promise<ModalOutcome<number>>;

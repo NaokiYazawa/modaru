@@ -29,8 +29,9 @@ export const ModalInstanceContext = createContext<string | null>(null);
  * specific controller — its buttons would act on the wrong one. Such
  * components use this hook instead.
  *
- * `TResult` should match the controller's `.returns<R>()` type. This is a
- * type-level declaration; it is not verified at runtime.
+ * `TResult` should match the controller's result type (the `R` in
+ * `createModal<R>()`). This is a type-level declaration; it is not verified
+ * at runtime.
  */
 export function useModalInstance<
   TResult = void,

@@ -168,35 +168,62 @@ function makeModal<TComponent extends ComponentType<never>, TResult>(
     options,
   );
 
-  const modal: Modal<TComponent, TResult> = {
+  // TResult is a phantom type with no runtime representation, so the controller
+  // is built once and typed at this boundary. The result type is fixed by the
+  // caller *before* a controller exists (via the curried `createModal<R>()`
+  // form), so there is never a differently-typed view of the same controller.
+  return {
     open: controller.open as Modal<TComponent, TResult>["open"],
     confirm: controller.confirm as Modal<TComponent, TResult>["confirm"],
     cancel: controller.cancel,
     close: controller.close,
     isOpen: controller.isOpen,
-    // TResult is a phantom type (no runtime representation), so re-typing is
-    // a cast of the same instance. Creating a new controller here would hand
-    // back one that cannot operate on the currently open instance.
-    returns: <R>() => modal as unknown as Modal<TComponent, R>,
   };
-  return modal;
 }
+
+/** The curried second step: props inferred, result type already fixed. */
+type ModalCreator<TResult> = <TComponent extends ComponentType<never>>(
+  component: TComponent,
+  options: ModalOptions,
+) => Modal<TComponent, TResult>;
 
 /**
  * Creates a typed modal controller for a component.
  *
+ * The confirm data type is declared up front, so a controller is only ever
+ * one type — there is no differently-typed alias of the same instance:
+ *  - `createModal(Component, options)` — the result type is `void`.
+ *  - `createModal<Result>()(Component, options)` — the result type is `Result`.
+ *
  * @example
- * const editUser = createModal(EditUserDialog, { wrapper: Dialog.Root })
- *   .returns<User>();
+ * // void result
+ * const confirmDelete = createModal(ConfirmDelete, { wrapper: Dialog.Root });
+ *
+ * // typed result
+ * const editUser = createModal<User>()(EditUserDialog, { wrapper: Dialog.Root });
  * const outcome = await editUser.open({ userId });
  * if (outcome.kind === "confirmed") save(outcome.data); // data is User here
  */
 export function createModal<TComponent extends ComponentType<never>>(
   component: TComponent,
   options: ModalOptions,
-): Modal<TComponent, void> {
-  return makeModal<TComponent, void>(component, options);
+): Modal<TComponent, void>;
+export function createModal<TResult>(): ModalCreator<TResult>;
+export function createModal(
+  component?: ComponentType<never>,
+  options?: ModalOptions,
+): Modal<ComponentType<never>, unknown> | ModalCreator<unknown> {
+  if (component !== undefined && options !== undefined) {
+    return makeModal(component, options);
+  }
+  return (c, o) => makeModal(c, o);
 }
+
+/** The curried second step for a wrapper-bound factory (options optional). */
+type BoundModalCreator<TResult> = <TComponent extends ComponentType<never>>(
+  component: TComponent,
+  options?: ModalBehaviorOptions,
+) => Modal<TComponent, TResult>;
 
 /**
  * Binds a wrapper (and default behavior) once, returning a `createModal`
@@ -208,15 +235,26 @@ export function createModal<TComponent extends ComponentType<never>>(
  * export const createAlertDialog = createModalFactory(AlertDialog.Root);
  *
  * // feature code stays UI-library-free
- * const confirmDelete = createDialog(ConfirmDelete);
+ * const confirmDelete = createDialog(ConfirmDelete); // void result
+ * const editUser = createDialog<User>()(EditUserDialog); // typed result
  */
 export function createModalFactory(
   wrapper: ModalWrapperComponent,
   defaults?: ModalBehaviorOptions,
 ) {
-  return <TComponent extends ComponentType<never>>(
+  function create<TComponent extends ComponentType<never>>(
     component: TComponent,
     options?: ModalBehaviorOptions,
-  ): Modal<TComponent, void> =>
-    createModal(component, { wrapper, ...defaults, ...options });
+  ): Modal<TComponent, void>;
+  function create<TResult>(): BoundModalCreator<TResult>;
+  function create(
+    component?: ComponentType<never>,
+    options?: ModalBehaviorOptions,
+  ): Modal<ComponentType<never>, unknown> | BoundModalCreator<unknown> {
+    if (component !== undefined) {
+      return makeModal(component, { wrapper, ...defaults, ...options });
+    }
+    return (c, o) => makeModal(c, { wrapper, ...defaults, ...o });
+  }
+  return create;
 }

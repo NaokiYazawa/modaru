@@ -167,7 +167,9 @@ export type ModalInstance = Readonly<{
 
 /**
  * A typed modal controller bound to one component. Props are inferred from
- * the component type; the confirm data type is declared with `returns()`.
+ * the component type; the confirm data type is declared up front with the
+ * curried `createModal<TResult>()` / `createModalFactory(...)<TResult>()`
+ * form (see {@link createModal}).
  */
 export type Modal<TComponent, TResult = void> = Readonly<{
   /**
@@ -190,9 +192,4 @@ export type Modal<TComponent, TResult = void> = Readonly<{
    * and about to be presented. `false` once closing has begun.
    */
   isOpen: () => boolean;
-  /**
-   * Declares the confirm data type. A type-level operation: it returns the
-   * same controller with the type parameter swapped, never a new controller.
-   */
-  returns: <R>() => Modal<TComponent, R>;
 }>;

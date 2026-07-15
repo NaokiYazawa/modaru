@@ -104,7 +104,9 @@ function RenameDialog({ current }: { current: string }) {
   );
 }
 
-export const renameModal = createDialog(RenameDialog).returns<string>();
+// The confirm data type is declared up front, so the controller is only ever
+// one type. A void modal needs no type argument: `createDialog(ConfirmDialog)`.
+export const renameModal = createDialog<string>()(RenameDialog);
 ```
 
 ### 4. Open and await
@@ -292,8 +294,8 @@ exact timing.
 
 | Export | Description |
 | --- | --- |
-| `createModal(Component, { wrapper, dismissible? })` | Creates a typed controller: `open` / `confirm` / `cancel` / `close` / `isOpen` / `returns`. |
-| `createModalFactory(wrapper, defaults?)` | Binds a wrapper once; returns a `createModal` variant for it. |
+| `createModal(Component, { wrapper, dismissible? })` | Creates a `void` controller: `open` / `confirm` / `cancel` / `close` / `isOpen`. For a typed result, declare it up front: `createModal<Result>()(Component, { wrapper })`. |
+| `createModalFactory(wrapper, defaults?)` | Binds a wrapper once; returns a `createModal` variant for it (`createDialog(Component)` for `void`, `createDialog<Result>()(Component)` for a typed result). |
 | `ModalProvider` | Renders active modals. Mount exactly one. |
 | `useModalInstance<TResult>()` | Handle (`confirm` / `cancel` / `close`) for the modal currently being rendered. |
 | `ModalOutcome` | Constructors and predicates for the outcome union. |
@@ -310,10 +312,12 @@ Semantics worth knowing:
   is preserved. Different controllers stack freely.
 - **First outcome wins.** Once closing begins, further `confirm`/`cancel`/
   `close` calls return `false` and never overwrite the settled outcome.
-- **`returns<R>()` is type-level.** It re-types the same controller; no new
-  state is created. Mind the alias: the pre-`returns` reference operates on
-  the same instance, and its bare `confirm()` would resolve a typed await
-  with `undefined` — export only the `.returns<R>()` handle.
+- **The result type is declared up front.** Use `createModal<R>()(Component,
+  opts)` (or `createDialog<R>()(Component)`) to fix the confirm data type when
+  the controller is created; omit the type argument for a `void` modal. Because
+  the type is fixed before the controller exists, there is never a
+  differently-typed alias of the same instance — `confirm(data)` always
+  matches the type you `await`.
 - **Provider unmount settles everything.** If `<ModalProvider>` unmounts
   while modals are live (route change, app teardown), every pending outcome
   resolves — as `dismissed` unless already settled — instead of hanging the

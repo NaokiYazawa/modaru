@@ -50,6 +50,14 @@ and shipping a CJS copy alongside would risk two stores loading in one app
 CJS projects on Node 20.19+ / 22.12+ can still `require("modaru")` as usual;
 older Node needs dynamic `import()`.
 
+> **Two entry points.** The *setup* API — `ModalProvider`,
+> `createModalFactory` / `createModal`, `withExitDuration` — is published from
+> `modaru/setup`; the *consumption* API — `useModalInstance`,
+> `modalController`, `ModalOutcome` — from `modaru`. Feature code only ever
+> imports `modaru`. Keeping setup on its own entry lets you enforce, with a
+> module-dependency linter, that the provider is mounted from one place and the
+> wrapper is bound in one module (see [Enforcing the setup boundary](#enforcing-the-setup-boundary)).
+
 ### 1. Bind your UI library (once)
 
 modaru is headless: you hand it the *root* component of your dialog primitive.
@@ -57,7 +65,7 @@ This is the only file in your app that knows which UI library you use.
 
 ```tsx
 // app/modal.ts
-import { createModalFactory } from "modaru";
+import { createModalFactory } from "modaru/setup";
 import { Dialog } from "@base-ui/react/dialog"; // Base UI v1+
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 
@@ -72,7 +80,7 @@ Base UI's roots satisfy the wrapper contract as-is. For other libraries, see
 
 ```tsx
 // app/layout.tsx (or your root component)
-import { ModalProvider } from "modaru";
+import { ModalProvider } from "modaru/setup";
 
 <ModalProvider />
 ```
@@ -292,16 +300,16 @@ exact timing.
 
 ## API
 
-| Export | Description |
-| --- | --- |
-| `createModal(Component, { wrapper, dismissible? })` | Creates a `void` controller: `open` / `confirm` / `cancel` / `close` / `isOpen`. For a typed result, declare it up front: `createModal<Result>()(Component, { wrapper })`. |
-| `createModalFactory(wrapper, defaults?)` | Binds a wrapper once; returns a `createModal` variant for it (`createDialog(Component)` for `void`, `createDialog<Result>()(Component)` for a typed result). |
-| `ModalProvider` | Renders active modals. Mount exactly one. |
-| `useModalInstance<TResult>()` | Handle (`confirm` / `cancel` / `close`) for the modal currently being rendered. |
-| `ModalOutcome` | Constructors and predicates for the outcome union. |
-| `modalController` | Cross-modal utilities: `closeAll()`, `isOpen()`, `count()`. |
-| `withExitDuration(Wrapper, ms)` | Adapts a completion-less dialog root to the wrapper contract. |
-| `resetModals()` (from `modaru/testing`) | Settles all pending outcomes and clears the store. For your test suite's `afterEach`. |
+| Export | Entry | Description |
+| --- | --- | --- |
+| `createModal(Component, { wrapper, dismissible? })` | `modaru/setup` | Creates a `void` controller: `open` / `confirm` / `cancel` / `close` / `isOpen`. For a typed result, declare it up front: `createModal<Result>()(Component, { wrapper })`. |
+| `createModalFactory(wrapper, defaults?)` | `modaru/setup` | Binds a wrapper once; returns a `createModal` variant for it (`createDialog(Component)` for `void`, `createDialog<Result>()(Component)` for a typed result). |
+| `ModalProvider` | `modaru/setup` | Renders active modals. Mount exactly one. |
+| `withExitDuration(Wrapper, ms)` | `modaru/setup` | Adapts a completion-less dialog root to the wrapper contract. |
+| `useModalInstance<TResult>()` | `modaru` | Handle (`confirm` / `cancel` / `close`) for the modal currently being rendered. |
+| `ModalOutcome` | `modaru` | Constructors and predicates for the outcome union. |
+| `modalController` | `modaru` | Cross-modal utilities: `closeAll()`, `isOpen()`, `count()`. |
+| `resetModals()` | `modaru/testing` | Settles all pending outcomes and clears the store. For your test suite's `afterEach`. |
 
 Semantics worth knowing:
 
@@ -318,14 +326,56 @@ Semantics worth knowing:
   the type is fixed before the controller exists, there is never a
   differently-typed alias of the same instance — `confirm(data)` always
   matches the type you `await`.
+- **Props are snapshotted at `open()`.** `open(props)` freezes the props and
+  the closures inside them for that instance — there is no update-while-open
+  API (by design; see [Comparison](#comparison)). A modal that must reflect
+  state changing *while it stays open* should hold that state internally (seed
+  it from props, then `useState`/`useRef`) and return it through the outcome,
+  rather than expecting a prop to update. In particular, do not
+  `setState(next)` and then synchronously `open()` reading that state in a
+  callback — the frozen callback still sees the pre-update value; pass `next`
+  into `open()` explicitly.
+- **A root-mounted provider does not unmount on client navigation.** In an SPA
+  router (Next.js App Router, React Router, …) `<ModalProvider>` lives above
+  the routed content, so a client-side `router.push()` does **not** unmount it
+  and an open modal stays on screen over the new page. Close it yourself before
+  navigating (`modal.close()`, or `modalController.closeAll()` for whatever is
+  open) — or wire `modalController.closeAll()` to route changes. (A full unmount
+  — hard navigation, teardown — still settles everything, per the previous
+  point.)
 - **Provider unmount settles everything.** If `<ModalProvider>` unmounts
-  while modals are live (route change, app teardown), every pending outcome
-  resolves — as `dismissed` unless already settled — instead of hanging the
-  awaiting caller.
+  while modals are live (route change that *does* unmount it, app teardown),
+  every pending outcome resolves — as `dismissed` unless already settled —
+  instead of hanging the awaiting caller.
 - **Fail-fast provider checks.** `open()` throws if no `<ModalProvider>` is
   mounted (or more than one) — checked at call time, so StrictMode/HMR/lazy
   transients never false-positive. State lives in module scope: mount one
   provider per app (one React root, one bundled copy of modaru).
+
+## Enforcing the setup boundary
+
+Because the setup API lives on its own `modaru/setup` entry, a module-dependency
+linter can guarantee the two "exactly one" rules mechanically. With
+[dependency-cruiser](https://github.com/sverweij/dependency-cruiser):
+
+```js
+// .dependency-cruiser.cjs — forbid importing modaru/setup outside the two
+// files allowed to mount the provider / bind the wrapper.
+{
+  name: "modaru-setup-only-in-entrypoints",
+  comment:
+    "ModalProvider / createModal(Factory) / withExitDuration belong to the app " +
+    "root and the single UI-binding module only. Binding elsewhere lets dismissible " +
+    "defaults and exit durations drift; a second provider makes open() throw.",
+  severity: "error",
+  from: { pathNot: ["^src/app/layout\\.tsx$", "^src/lib/modal\\.ts$"] },
+  to: { path: "^node_modules/modaru/dist/setup" },
+}
+```
+
+Add a companion rule keeping `modaru/testing` in test files, and feature code —
+which only ever imports `modaru` — is free to use `useModalInstance` /
+`modalController` anywhere.
 
 ## Testing
 
